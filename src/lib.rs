@@ -1,3 +1,6 @@
+#[cfg(target_arch = "wasm32")]
+extern crate wasm_bindgen;
+
 use std::{f32::consts::PI, iter};
 
 use cgmath::prelude::*;
