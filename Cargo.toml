@@ -8,9 +8,6 @@ edition = "2018"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-web-sys = "0.3"
 cfg-if = "1"
 anyhow = "1.0"
 bytemuck = { version = "1.12", features = ["derive"] }
