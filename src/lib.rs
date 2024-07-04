@@ -3,7 +3,7 @@ extern crate wasm_bindgen;
 
 use std::{f32::consts::PI, iter};
 
-use cgmath::prelude::*;
+use cgmath::{prelude::*, Quaternion, Vector3};
 use wgpu::util::DeviceExt;
 use winit::{
     event::*,
@@ -14,6 +14,12 @@ use winit::{
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsValue;
+
+use serde_json;
+use web_sys::console;
 
 mod camera;
 mod hdr;
@@ -75,6 +81,21 @@ impl Instance {
             .into(),
             normal: cgmath::Matrix3::from(self.rotation).into(),
         }
+    }
+    pub fn update_rotation(&mut self, delta_time_secs: f32, rotation_speed_deg_per_sec: f32) {
+        let y_delta_rotation = Quaternion::from_axis_angle(
+            Vector3::unit_y(),
+            cgmath::Deg(rotation_speed_deg_per_sec * delta_time_secs / 1.7),
+        );
+        let z_delta_rotation = Quaternion::from_axis_angle(
+            Vector3::unit_z(),
+            cgmath::Deg(rotation_speed_deg_per_sec * delta_time_secs / 1.9),
+        );
+        let x_delta_rotation = Quaternion::from_axis_angle(
+            Vector3::unit_x(),
+            cgmath::Deg(rotation_speed_deg_per_sec * delta_time_secs),
+        );
+        self.rotation = self.rotation * z_delta_rotation * x_delta_rotation;
     }
 }
 
@@ -182,6 +203,7 @@ struct State<'a> {
     sky_pipeline: wgpu::RenderPipeline,
     #[cfg(feature = "debug")]
     debug: debug::Debug,
+    rotate: f32,
 }
 
 fn create_render_pipeline(
@@ -346,7 +368,7 @@ impl<'a> State<'a> {
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection =
             camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
-        let camera_controller = camera::CameraController::new(4.0, 0.4);
+        let camera_controller = camera::CameraController::new(20.0, 0.4);
 
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera, &projection);
@@ -357,31 +379,40 @@ impl<'a> State<'a> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        const SPACE_BETWEEN: f32 = 3.0;
-        let instances = (0..NUM_INSTANCES_PER_ROW)
+        const SPACE_BETWEEN: f32 = 4.0;
+        let mut instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|z| {
-                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                (0..NUM_INSTANCES_PER_ROW).flat_map(move |x| {
                     let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
                     let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-                    let position = cgmath::Vector3 { x, y: 0.0, z };
+                    let positions = (0..NUM_INSTANCES_PER_ROW).map(move |y| {
+                        let y = SPACE_BETWEEN * (y as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-                    let rotation = if position.is_zero() {
-                        cgmath::Quaternion::from_axis_angle(
-                            cgmath::Vector3::unit_z(),
-                            cgmath::Deg(0.0),
-                        )
-                    } else {
-                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-                    };
+                        let position = cgmath::Vector3 { x, y, z };
 
-                    Instance { position, rotation }
+                        let rotation = if position.is_zero() {
+                            cgmath::Quaternion::from_axis_angle(
+                                cgmath::Vector3::unit_z(),
+                                cgmath::Deg(0.0),
+                            )
+                        } else {
+                            cgmath::Quaternion::from_axis_angle(
+                                position.normalize(),
+                                cgmath::Deg(0.0),
+                            )
+                        };
+
+                        Instance { position, rotation }
+                    });
+
+                    positions.collect::<Vec<_>>()
                 })
             })
             .collect::<Vec<_>>();
-
-        let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let mut rotate: f32 = 0.0;
+        let mut instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+        let mut instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&instance_data),
             usage: wgpu::BufferUsages::VERTEX,
@@ -640,6 +671,7 @@ impl<'a> State<'a> {
 
             #[cfg(feature = "debug")]
             debug,
+            rotate,
         })
     }
 
@@ -699,13 +731,32 @@ impl<'a> State<'a> {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
 
-        // Update the light
+        self.rotate = (self.rotate + 10.0) % 1000.0;
+        for i in &mut self.instances {
+            i.update_rotation(dt.as_secs_f32(), self.rotate);
+        }
+
+        let instance_data = self
+            .instances
+            .iter()
+            .map(Instance::to_raw)
+            .collect::<Vec<_>>();
+
+        self.instance_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Instance Buffer"),
+                contents: bytemuck::cast_slice(&instance_data),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
         let old_position: cgmath::Vector3<_> = self.light_uniform.position.into();
         self.light_uniform.position = (cgmath::Quaternion::from_axis_angle(
             (0.0, 1.0, 0.0).into(),
-            cgmath::Deg(PI * dt.as_secs_f32()),
+            cgmath::Deg(std::f32::consts::PI * dt.as_secs_f32()),
         ) * old_position)
             .into();
+
         self.queue.write_buffer(
             &self.light_buffer,
             0,
@@ -810,14 +861,16 @@ impl<'a> State<'a> {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
 pub async fn run() {
     cfg_if::cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            console_log::init_with_level(log::Level::Info).expect("Could't initialize logger");
+    if #[cfg(target_arch = "wasm32")] {
+        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+        console_log::init_with_level(log::Level::Info).expect("Could't initialize logger");
         } else {
             env_logger::init();
-        }
-    }
+            }
+            }
 
+    let mut fps_counter = 0;
+    let mut fps_timer = instant::Instant::now();
     let event_loop = EventLoop::new().unwrap();
     let title = env!("CARGO_PKG_NAME");
     let window = winit::window::WindowBuilder::new()
@@ -881,6 +934,15 @@ pub async fn run() {
                         let dt = now - last_render_time;
                         last_render_time = now;
                         state.update(dt);
+
+                        fps_counter +=1;
+
+                        if fps_timer.elapsed().as_secs_f64() >= 1.0 {
+                            console::log_1(&fps_counter.to_string().into());
+                            fps_counter = 0;
+                            fps_timer = instant::Instant::now();
+                        }
+
                         match state.render() {
                             Ok(_) => {}
                             // Reconfigure the surface if it's lost or outdated

@@ -2315,6 +2315,8 @@ dependencies = [
  "log",
  "pollster",
  "reqwest",
+ "serde",
+ "serde_json",
  "tobj",
  "wasm-bindgen",
  "wasm-bindgen-futures",
