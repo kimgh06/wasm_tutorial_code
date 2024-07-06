@@ -704,18 +704,27 @@ impl<'a> State<'a> {
                         ..
                     },
                 ..
-            } => self.camera_controller.process_keyboard(*key, *state),
+            } => self
+                .camera_controller
+                .process_keyboard(*key, *state, &self.window),
             WindowEvent::MouseWheel { delta, .. } => {
                 self.camera_controller.process_scroll(delta);
                 true
             }
-            WindowEvent::MouseInput {
-                button: MouseButton::Left,
-                state,
-                ..
-            } => {
-                self.mouse_pressed = *state == ElementState::Pressed;
-                true
+            WindowEvent::MouseInput { button, state, .. } => {
+                if *button == MouseButton::Left {
+                    if *state == ElementState::Pressed {
+                        self.camera_controller.grab_cursor(&self.window);
+                        self.mouse_pressed = true;
+                        true
+                    } else {
+                        // self.camera_controller.release_cursor(&self.window);
+                        // self.mouse_pressed = false;
+                        true
+                    }
+                } else {
+                    false
+                }
             }
             _ => false,
         }

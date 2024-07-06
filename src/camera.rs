@@ -4,6 +4,7 @@ use std::time::Duration;
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
+use winit::window::{CursorGrabMode, Window};
 
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
@@ -61,7 +62,6 @@ impl Projection {
     }
 
     pub fn calc_matrix(&self) -> Matrix4<f32> {
-        // UDPATE
         perspective(self.fovy, self.aspect, self.znear, self.zfar)
     }
 }
@@ -79,6 +79,9 @@ pub struct CameraController {
     scroll: f32,
     speed: f32,
     sensitivity: f32,
+    is_cursor_grabbed: bool,
+    grab_cursor: bool,
+    release_cursor: bool,
 }
 
 impl CameraController {
@@ -95,10 +98,13 @@ impl CameraController {
             scroll: 0.0,
             speed,
             sensitivity,
+            is_cursor_grabbed: false,
+            grab_cursor: false,
+            release_cursor: false,
         }
     }
 
-    pub fn process_keyboard(&mut self, key: KeyCode, state: ElementState) -> bool {
+    pub fn process_keyboard(&mut self, key: KeyCode, state: ElementState, window: &Window) -> bool {
         let amount = if state == ElementState::Pressed {
             1.0
         } else {
@@ -129,18 +135,23 @@ impl CameraController {
                 self.amount_down = amount;
                 true
             }
+            KeyCode::Escape => {
+                self.release_cursor(&window);
+                true
+            }
             _ => false,
         }
     }
 
     pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
-        self.rotate_horizontal = mouse_dx as f32;
-        self.rotate_vertical = mouse_dy as f32;
+        if self.is_cursor_grabbed {
+            self.rotate_horizontal = mouse_dx as f32 * 2.0;
+            self.rotate_vertical = mouse_dy as f32 * 2.0;
+        }
     }
 
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
         self.scroll = match delta {
-            // I'm assuming a line is about 100 pixels
             MouseScrollDelta::LineDelta(_, scroll) => -scroll * 0.5,
             MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
         };
@@ -157,34 +168,44 @@ impl CameraController {
         camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
 
         // Move in/out (aka. "zoom")
-        // Note: this isn't an actual zoom. The camera's position
-        // changes when zooming. I've added this to make it easier
-        // to get closer to an object you want to focus on.
         let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
         let scrollward =
             Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
         camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
         self.scroll = 0.0;
 
-        // Move up/down. Since we don't use roll, we can just
-        // modify the y coordinate directly.
+        // Move up/down
         camera.position.y += (self.amount_up - self.amount_down) * self.speed * dt;
 
         // Rotate
         camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
         camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
 
-        // If process_mouse isn't called every frame, these values
-        // will not get set to zero, and the camera will rotate
-        // when moving in a non cardinal direction.
+        // Reset rotation amounts
         self.rotate_horizontal = 0.0;
         self.rotate_vertical = 0.0;
 
-        // Keep the camera's angle from going too high/low.
+        // Clamp pitch
         if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
             camera.pitch = -Rad(SAFE_FRAC_PI_2);
         } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
             camera.pitch = Rad(SAFE_FRAC_PI_2);
         }
+    }
+
+    pub fn grab_cursor(&mut self, window: &Window) {
+        window
+            .set_cursor_grab(CursorGrabMode::Locked)
+            .expect("Failed to grab cursor");
+        window.set_cursor_visible(false);
+        self.is_cursor_grabbed = true;
+    }
+
+    pub fn release_cursor(&mut self, window: &Window) {
+        window
+            .set_cursor_grab(CursorGrabMode::None)
+            .expect("Failed to release cursor");
+        window.set_cursor_visible(true);
+        self.is_cursor_grabbed = false;
     }
 }
