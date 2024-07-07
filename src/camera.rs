@@ -5,9 +5,9 @@ use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
 use winit::window::{CursorGrabMode, Window};
-
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
+// pub mod state;
 #[derive(Debug)]
 pub struct Camera {
     pub position: Point3<f32>,
@@ -98,7 +98,7 @@ impl CameraController {
             scroll: 0.0,
             speed,
             sensitivity,
-            is_cursor_grabbed: false,
+            is_cursor_grabbed: true,
             grab_cursor: false,
             release_cursor: false,
         }
@@ -136,7 +136,10 @@ impl CameraController {
                 true
             }
             KeyCode::Escape => {
-                self.release_cursor(&window);
+                window
+                    .set_cursor_grab(CursorGrabMode::None)
+                    .expect("Failed to release cursor");
+                window.set_cursor_visible(true);
                 true
             }
             _ => false,

@@ -171,7 +171,7 @@ struct LightUniform {
     _padding2: u32,
 }
 
-struct State<'a> {
+pub struct State<'a> {
     window: &'a Window,
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
@@ -716,6 +716,7 @@ impl<'a> State<'a> {
                     if *state == ElementState::Pressed {
                         self.camera_controller.grab_cursor(&self.window);
                         self.mouse_pressed = true;
+
                         true
                     } else {
                         // self.camera_controller.release_cursor(&self.window);
