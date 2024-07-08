@@ -4,10 +4,9 @@ use std::time::Duration;
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
-use winit::window::{CursorGrabMode, Window};
+
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
-// pub mod state;
 #[derive(Debug)]
 pub struct Camera {
     pub position: Point3<f32>,
@@ -79,9 +78,7 @@ pub struct CameraController {
     scroll: f32,
     speed: f32,
     sensitivity: f32,
-    is_cursor_grabbed: bool,
-    grab_cursor: bool,
-    release_cursor: bool,
+    // is_cursor_grabbed: bool,
 }
 
 impl CameraController {
@@ -98,13 +95,11 @@ impl CameraController {
             scroll: 0.0,
             speed,
             sensitivity,
-            is_cursor_grabbed: true,
-            grab_cursor: false,
-            release_cursor: false,
+            // is_cursor_grabbed: true,
         }
     }
 
-    pub fn process_keyboard(&mut self, key: KeyCode, state: ElementState, window: &Window) -> bool {
+    pub fn process_keyboard(&mut self, key: KeyCode, state: ElementState) -> bool {
         let amount = if state == ElementState::Pressed {
             1.0
         } else {
@@ -135,22 +130,15 @@ impl CameraController {
                 self.amount_down = amount;
                 true
             }
-            KeyCode::Escape => {
-                window
-                    .set_cursor_grab(CursorGrabMode::None)
-                    .expect("Failed to release cursor");
-                window.set_cursor_visible(true);
-                true
-            }
             _ => false,
         }
     }
 
     pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
-        if self.is_cursor_grabbed {
-            self.rotate_horizontal = mouse_dx as f32 * 2.0;
-            self.rotate_vertical = mouse_dy as f32 * 2.0;
-        }
+        // if self.is_cursor_grabbed {
+        self.rotate_horizontal = mouse_dx as f32 * 2.0;
+        self.rotate_vertical = mouse_dy as f32 * 2.0;
+        // }
     }
 
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
@@ -194,21 +182,5 @@ impl CameraController {
         } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
             camera.pitch = Rad(SAFE_FRAC_PI_2);
         }
-    }
-
-    pub fn grab_cursor(&mut self, window: &Window) {
-        window
-            .set_cursor_grab(CursorGrabMode::Locked)
-            .expect("Failed to grab cursor");
-        window.set_cursor_visible(false);
-        self.is_cursor_grabbed = true;
-    }
-
-    pub fn release_cursor(&mut self, window: &Window) {
-        window
-            .set_cursor_grab(CursorGrabMode::None)
-            .expect("Failed to release cursor");
-        window.set_cursor_visible(true);
-        self.is_cursor_grabbed = false;
     }
 }

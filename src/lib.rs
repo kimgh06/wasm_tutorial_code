@@ -6,10 +6,11 @@ use std::{f32::consts::PI, iter};
 use cgmath::{prelude::*, Quaternion, Vector3};
 use wgpu::util::DeviceExt;
 use winit::{
+    dpi::PhysicalPosition,
     event::*,
     event_loop::EventLoop,
     keyboard::{KeyCode, PhysicalKey},
-    window::Window,
+    window::{CursorGrabMode, Window},
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -204,6 +205,7 @@ pub struct State<'a> {
     #[cfg(feature = "debug")]
     debug: debug::Debug,
     rotate: f32,
+    position: PhysicalPosition<f64>,
 }
 
 fn create_render_pipeline(
@@ -302,7 +304,7 @@ impl<'a> State<'a> {
             )
             .await
             .unwrap();
-
+        let mut position = PhysicalPosition::new(0.0, 0.0);
         let surface_caps = surface.get_capabilities(&adapter);
         // Shader code in this tutorial assumes an Srgb surface texture. Using a different
         // one will result all the colors comming out darker. If you want to support non
@@ -664,6 +666,7 @@ impl<'a> State<'a> {
             #[allow(dead_code)]
             debug_material,
             mouse_pressed: false,
+            position,
             // NEW!
             hdr,
             environment_bind_group,
@@ -704,9 +707,7 @@ impl<'a> State<'a> {
                         ..
                     },
                 ..
-            } => self
-                .camera_controller
-                .process_keyboard(*key, *state, &self.window),
+            } => self.camera_controller.process_keyboard(*key, *state),
             WindowEvent::MouseWheel { delta, .. } => {
                 self.camera_controller.process_scroll(delta);
                 true
@@ -714,13 +715,11 @@ impl<'a> State<'a> {
             WindowEvent::MouseInput { button, state, .. } => {
                 if *button == MouseButton::Left {
                     if *state == ElementState::Pressed {
-                        self.camera_controller.grab_cursor(&self.window);
-                        self.mouse_pressed = true;
-
+                        self.window
+                            .set_cursor_grab(CursorGrabMode::Locked)
+                            .expect("Failed to grab cursor");
                         true
                     } else {
-                        // self.camera_controller.release_cursor(&self.window);
-                        // self.mouse_pressed = false;
                         true
                     }
                 } else {
@@ -874,10 +873,11 @@ pub async fn run() {
     if #[cfg(target_arch = "wasm32")] {
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
         console_log::init_with_level(log::Level::Info).expect("Could't initialize logger");
-        } else {
+        }
+        else {
             env_logger::init();
-            }
-            }
+        }
+    }
 
     let mut fps_counter = 0;
     let mut fps_timer = instant::Instant::now();
@@ -909,19 +909,20 @@ pub async fn run() {
 
     let mut state = State::new(&window).await.unwrap();
     let mut last_render_time = instant::Instant::now();
-    event_loop.run(move |event, control_flow| {
+    event_loop.run(move |event: Event<()>, control_flow| {
+        // console::log_1(&format!("{:?}", control_flow).into());
         match event {
             Event::DeviceEvent {
                 event: DeviceEvent::MouseMotion{ delta, },
                 .. // We're not using device_id currently
-            } => if state.mouse_pressed {
-                state.camera_controller.process_mouse(delta.0, delta.1)
+                } => if state.mouse_pressed {
+                    state.camera_controller.process_mouse(delta.0, delta.1)
             }
             // UPDATED!
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == state.window().id() && !state.input(event) => {
+                } if window_id == state.window().id() && !state.input(event) => {
                 match event {
                     #[cfg(not(target_arch="wasm32"))]
                     WindowEvent::CloseRequested
@@ -936,6 +937,15 @@ pub async fn run() {
                     } => control_flow.exit(),
                     WindowEvent::Resized(physical_size) => {
                         state.resize(*physical_size);
+                    }
+                    WindowEvent::CursorMoved { position, .. } => {
+                        if state.position != *position{
+                            state.mouse_pressed = false;
+                            state.position = position.clone();
+                        }
+                        else{
+                            state.mouse_pressed = true;
+                        }
                     }
                     // UPDATED!
                     WindowEvent::RedrawRequested => {
