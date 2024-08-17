@@ -78,7 +78,6 @@ pub struct CameraController {
     scroll: f32,
     speed: f32,
     sensitivity: f32,
-    // is_cursor_grabbed: bool,
 }
 
 impl CameraController {
@@ -95,7 +94,6 @@ impl CameraController {
             scroll: 0.0,
             speed,
             sensitivity,
-            // is_cursor_grabbed: true,
         }
     }
 
@@ -134,11 +132,21 @@ impl CameraController {
         }
     }
 
+    pub fn left_stick_move(&mut self, axis0: f32, axis1: f32) {
+        self.amount_forward = -axis1;
+        self.amount_backward = axis1;
+        self.amount_right = axis0;
+        self.amount_left = -axis0;
+    }
+
+    pub fn right_stick_move(&mut self, axis2: f32, axis3: f32) {
+        self.rotate_horizontal = axis2 * 2.0;
+        self.rotate_vertical = axis3 * 2.0;
+    }
+
     pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
-        // if self.is_cursor_grabbed {
-        self.rotate_horizontal = mouse_dx as f32 * 2.0;
-        self.rotate_vertical = mouse_dy as f32 * 2.0;
-        // }
+        self.rotate_horizontal = mouse_dx as f32;
+        self.rotate_vertical = mouse_dy as f32;
     }
 
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {

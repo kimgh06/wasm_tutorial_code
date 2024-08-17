@@ -20,11 +20,12 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 
 use serde_json;
-use web_sys::console;
+use web_sys::{console, wasm_bindgen::JsCast, Gamepad};
 
 mod camera;
 mod hdr;
 mod model;
+// mod model_gltf;
 mod resources;
 mod texture;
 
@@ -370,7 +371,7 @@ impl<'a> State<'a> {
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection =
             camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
-        let camera_controller = camera::CameraController::new(20.0, 0.4);
+        let camera_controller = camera::CameraController::new(20.0, 0.8);
 
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera, &projection);
@@ -388,7 +389,7 @@ impl<'a> State<'a> {
                     let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
                     let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-                    let positions = (0..NUM_INSTANCES_PER_ROW).map(move |y| {
+                    let positions = (5..6).map(move |y| {
                         let y = SPACE_BETWEEN * (y as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
                         let position = cgmath::Vector3 { x, y, z };
@@ -730,7 +731,50 @@ impl<'a> State<'a> {
         }
     }
 
+    fn log_gamepad(gamepad: &Gamepad) {
+        // console::log_1(&format!("Gamepad: {:?}", gamepad).into());
+        // console::log_1(&format!("Connected: {:?}", gamepad.connected()).into());
+        // console::log_1(&format!("Timestamp: {:?}", gamepad.timestamp()).into());
+        console::log_1(&format!("Axes: {:?}", gamepad.axes().get(0)).into());
+        console::log_1(&format!("Axes: {:?}", gamepad.axes().get(1)).into());
+        // console::log_1(&format!("Buttons: {:?}", gamepad.buttons()).into());
+    }
+
+    fn left_stick_move(&mut self, x: f32, y: f32) {
+        let speed = 0.3;
+        self.camera_controller.left_stick_move(x * speed, y * speed);
+    }
+
+    fn right_stick_move(&mut self, x: f32, y: f32) {
+        self.camera_controller.right_stick_move(x, y);
+    }
+
     fn update(&mut self, dt: std::time::Duration) {
+        let window = web_sys::window().expect("no global `window` exists");
+        let navigator: web_sys::Navigator = window.navigator();
+
+        if let Some(gamepad_list) = navigator.get_gamepads().ok() {
+            for i in 0..gamepad_list.length() {
+                let gamepad_jv = gamepad_list.get(i);
+                if !gamepad_jv.is_null() && !gamepad_jv.is_undefined() {
+                    let gamepad: Gamepad = gamepad_jv.unchecked_into();
+                    if !gamepad.is_undefined() && !gamepad.is_null() {
+                        let axes = gamepad.axes();
+                        let mut x: f32 = axes.get(0).as_f64().unwrap_or(0.0) as f32;
+                        let mut y: f32 = axes.get(1).as_f64().unwrap_or(0.0) as f32;
+                        x = if x.abs() > 0.1 { x } else { 0.0 };
+                        y = if y.abs() > 0.1 { y } else { 0.0 };
+                        self.left_stick_move(x, y);
+                        let mut horizon: f32 = axes.get(2).as_f64().unwrap_or(0.0) as f32;
+                        let mut vertical: f32 = axes.get(3).as_f64().unwrap_or(0.0) as f32;
+                        horizon = if horizon.abs() > 0.1 { horizon } else { 0.0 };
+                        vertical = if vertical.abs() > 0.1 { vertical } else { 0.0 };
+                        self.right_stick_move(horizon, vertical);
+                    }
+                }
+            }
+        }
+
         self.camera_controller.update_camera(&mut self.camera, dt);
         self.camera_uniform
             .update_view_proj(&self.camera, &self.projection);
@@ -740,10 +784,10 @@ impl<'a> State<'a> {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
 
-        self.rotate = (self.rotate + 10.0) % 1000.0;
-        for i in &mut self.instances {
-            i.update_rotation(dt.as_secs_f32(), self.rotate);
-        }
+        // self.rotate = (self.rotate + 10.0) % 1000.0;
+        // for i in &mut self.instances {
+        //     i.update_rotation(dt.as_secs_f32(), self.rotate);
+        // }
 
         let instance_data = self
             .instances
@@ -947,7 +991,6 @@ pub async fn run() {
                             state.mouse_pressed = true;
                         }
                     }
-                    // UPDATED!
                     WindowEvent::RedrawRequested => {
                         state.window().request_redraw();
                         let now = instant::Instant::now();

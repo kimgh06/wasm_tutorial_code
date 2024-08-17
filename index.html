@@ -14,7 +14,51 @@
         import init from "./pkg/wasm_tutorial.js";
         init().then(() => {
             console.log("WASM Loaded");
+            window.addEventListener('gamepadconnected', (e) => {
+                console.log('Gamepad', e)
+                // Loop();
+            })
         });
+
+        function Loop() {
+            let pad = navigator.getGamepads()[0];
+            if (!pad) {
+                return;
+            }
+            if (pad) {
+                pad.buttons.forEach((button, index) => {
+                    if (button.pressed) {
+                        console.log(`${pad.timestamp / 1000}s Button ${index} pressed on value ${button.value}`);
+                        if (index === 7) {
+                            pad.vibrationActuator?.playEffect("dual-rumble", {
+                                duration: 100,
+                                strongMagnitude: button.value,
+                                startDelay: 0
+                            })
+                        }
+                        if (index === 6) {
+                            pad.vibrationActuator?.playEffect("dual-rumble", {
+                                duration: 100,
+                                weakMagnitude: button.value,
+                                startDelay: 0
+                            })
+                        }
+                    }
+                });
+
+                pad.axes.forEach((axis, index) => {
+                    if (Math.abs(axis) > 0.1) {
+                        //right 0 1, 0 0
+                        //left 0 -1, 0 0
+                        //forward 0 0, -1 0
+                        //backward 0 0, 1 0
+
+                        console.log(`${pad.timestamp / 1000}s Axis ${index} on gamepad  value: ${axis}`);
+                    }
+                });
+            }
+            requestAnimationFrame(Loop)
+        }
     </script>
     <style>
         body {
