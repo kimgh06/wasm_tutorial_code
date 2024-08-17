@@ -1,6 +1,8 @@
 use cgmath::*;
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
+use web_sys::console;
+use web_sys::wasm_bindgen::JsValue;
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
@@ -77,6 +79,9 @@ pub struct CameraController {
     rotate_vertical: f32,
     scroll: f32,
     speed: f32,
+    veloctiy: f32,
+    is_jumping: bool,
+    is_on_ground: bool,
     sensitivity: f32,
 }
 
@@ -93,6 +98,9 @@ impl CameraController {
             rotate_vertical: 0.0,
             scroll: 0.0,
             speed,
+            veloctiy: 0.0,
+            is_jumping: false,
+            is_on_ground: true,
             sensitivity,
         }
     }
@@ -140,8 +148,8 @@ impl CameraController {
     }
 
     pub fn right_stick_move(&mut self, axis2: f32, axis3: f32) {
-        self.rotate_horizontal = axis2 * 2.0;
-        self.rotate_vertical = axis3 * 2.0;
+        self.rotate_horizontal = axis2 * 2.5;
+        self.rotate_vertical = axis3 * 2.5;
     }
 
     pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
@@ -156,7 +164,28 @@ impl CameraController {
         };
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
+    pub fn jump(&mut self, camera: &mut Camera, dt: Duration) {
+        let dt = dt.as_secs_f32();
+        if self.is_on_ground {
+            self.is_jumping = true;
+            self.is_on_ground = false;
+            self.veloctiy = 15.0;
+            camera.position.y += self.veloctiy * dt;
+        }
+    }
+
+    pub fn falling(&mut self, camera: &mut Camera, dt: f32) {
+        if !self.is_on_ground {
+            self.is_jumping = true;
+            self.veloctiy -= 1.0 * 9.8 * dt;
+            camera.position.y += self.veloctiy * dt;
+        } else {
+            self.veloctiy = 0.0;
+            self.is_jumping = false;
+        }
+    }
+
+    pub fn update_camera(&mut self, camera: &mut Camera, is_on_ground: bool, dt: Duration) {
         let dt = dt.as_secs_f32();
 
         // Move forward/backward and left/right
@@ -184,11 +213,23 @@ impl CameraController {
         self.rotate_horizontal = 0.0;
         self.rotate_vertical = 0.0;
 
+        //falling
+        self.is_on_ground = is_on_ground;
+        self.falling(camera, dt);
+
         // Clamp pitch
         if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
             camera.pitch = -Rad(SAFE_FRAC_PI_2);
         } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
             camera.pitch = Rad(SAFE_FRAC_PI_2);
         }
+        // console::log_1(&JsValue::from_str(
+        //     &(String::from("x:")
+        //         + &camera.position.x.to_string()
+        //         + "\ny:"
+        //         + &camera.position.y.to_string()
+        //         + "\nz:"
+        //         + &camera.position.z.to_string()),
+        // ));
     }
 }

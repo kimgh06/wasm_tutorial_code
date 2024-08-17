@@ -20,7 +20,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 
 use serde_json;
-use web_sys::{console, wasm_bindgen::JsCast, Gamepad};
+use web_sys::{console, wasm_bindgen::JsCast, Gamepad, GamepadButton};
 
 mod camera;
 mod hdr;
@@ -206,6 +206,8 @@ pub struct State<'a> {
     #[cfg(feature = "debug")]
     debug: debug::Debug,
     rotate: f32,
+    is_jumping: bool,
+    is_on_ground: bool,
     position: PhysicalPosition<f64>,
 }
 
@@ -382,7 +384,7 @@ impl<'a> State<'a> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        const SPACE_BETWEEN: f32 = 4.0;
+        const SPACE_BETWEEN: f32 = 3.0;
         let mut instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|z| {
                 (0..NUM_INSTANCES_PER_ROW).flat_map(move |x| {
@@ -639,6 +641,9 @@ impl<'a> State<'a> {
             )
         };
 
+        let is_jumping = false;
+        let is_on_ground = true;
+
         #[cfg(feature = "debug")]
         let debug = debug::Debug::new(&device, &camera_bind_group_layout, surface_format);
 
@@ -672,6 +677,8 @@ impl<'a> State<'a> {
             hdr,
             environment_bind_group,
             sky_pipeline,
+            is_jumping,
+            is_on_ground,
 
             #[cfg(feature = "debug")]
             debug,
@@ -731,13 +738,11 @@ impl<'a> State<'a> {
         }
     }
 
-    fn log_gamepad(gamepad: &Gamepad) {
+    fn log_gamepad(&mut self, gamepad: &Gamepad) {
         // console::log_1(&format!("Gamepad: {:?}", gamepad).into());
         // console::log_1(&format!("Connected: {:?}", gamepad.connected()).into());
         // console::log_1(&format!("Timestamp: {:?}", gamepad.timestamp()).into());
-        console::log_1(&format!("Axes: {:?}", gamepad.axes().get(0)).into());
-        console::log_1(&format!("Axes: {:?}", gamepad.axes().get(1)).into());
-        // console::log_1(&format!("Buttons: {:?}", gamepad.buttons()).into());
+        console::log_1(&format!("Buttons: {:?}", gamepad.buttons()).into());
     }
 
     fn left_stick_move(&mut self, x: f32, y: f32) {
@@ -747,6 +752,30 @@ impl<'a> State<'a> {
 
     fn right_stick_move(&mut self, x: f32, y: f32) {
         self.camera_controller.right_stick_move(x, y);
+    }
+
+    fn check_fall(&mut self) {
+        let cam_position = self.camera.position;
+        for instance in &self.instances {
+            let position = instance.position;
+            let gap = 1.0;
+            if (cam_position.y > position.y + 2.0 && position.y + 5.0 > cam_position.y)
+                && (position.x - gap < cam_position.x && cam_position.x < position.x + gap)
+                && (position.z - gap < cam_position.z && cam_position.z < position.z + gap)
+            {
+                self.is_on_ground = true;
+                return;
+            } else {
+                self.is_on_ground = false;
+            }
+            // console::log_1(
+            //     &format!(
+            //         "cam: {:?} position: {:?} is_on_ground: {:?}",
+            //         self.camera.position.y, position.y, self.is_on_ground
+            //     )
+            //     .into(),
+            // );
+        }
     }
 
     fn update(&mut self, dt: std::time::Duration) {
@@ -760,22 +789,33 @@ impl<'a> State<'a> {
                     let gamepad: Gamepad = gamepad_jv.unchecked_into();
                     if !gamepad.is_undefined() && !gamepad.is_null() {
                         let axes = gamepad.axes();
+                        let buttons = gamepad.buttons();
+                        // moving
                         let mut x: f32 = axes.get(0).as_f64().unwrap_or(0.0) as f32;
                         let mut y: f32 = axes.get(1).as_f64().unwrap_or(0.0) as f32;
                         x = if x.abs() > 0.1 { x } else { 0.0 };
                         y = if y.abs() > 0.1 { y } else { 0.0 };
                         self.left_stick_move(x, y);
+                        // looking
                         let mut horizon: f32 = axes.get(2).as_f64().unwrap_or(0.0) as f32;
                         let mut vertical: f32 = axes.get(3).as_f64().unwrap_or(0.0) as f32;
                         horizon = if horizon.abs() > 0.1 { horizon } else { 0.0 };
                         vertical = if vertical.abs() > 0.1 { vertical } else { 0.0 };
                         self.right_stick_move(horizon, vertical);
+                        //jump
+                        let jump: GamepadButton = buttons.get(0).unchecked_into();
+                        let is_jumping = jump.pressed();
+                        if is_jumping {
+                            self.camera_controller.jump(&mut self.camera, dt);
+                        }
                     }
                 }
             }
         }
 
-        self.camera_controller.update_camera(&mut self.camera, dt);
+        self.check_fall();
+        self.camera_controller
+            .update_camera(&mut self.camera, self.is_on_ground, dt);
         self.camera_uniform
             .update_view_proj(&self.camera, &self.projection);
         self.queue.write_buffer(
