@@ -384,17 +384,21 @@ impl<'a> State<'a> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        const SPACE_BETWEEN: f32 = 3.0;
+        const SPACE_BETWEEN: f32 = 2.0;
         let mut instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|z| {
                 (0..NUM_INSTANCES_PER_ROW).flat_map(move |x| {
                     let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
                     let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-                    let positions = (5..6).map(move |y| {
+                    let positions = (3..6).map(move |y| {
                         let y = SPACE_BETWEEN * (y as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-                        let position = cgmath::Vector3 { x, y, z };
+                        let position = cgmath::Vector3 {
+                            x: x - (y - 5.0),
+                            y,
+                            z: z - (y - 5.0),
+                        };
 
                         let rotation = if position.is_zero() {
                             cgmath::Quaternion::from_axis_angle(
@@ -415,6 +419,7 @@ impl<'a> State<'a> {
                 })
             })
             .collect::<Vec<_>>();
+
         let mut rotate: f32 = 0.0;
         let mut instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         let mut instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -748,6 +753,36 @@ impl<'a> State<'a> {
     fn left_stick_move(&mut self, x: f32, y: f32) {
         let speed = 0.3;
         self.camera_controller.left_stick_move(x * speed, y * speed);
+        let cam_position = self.camera.position;
+        let gap = 1.5;
+        let range = 0.001;
+        for instance in &self.instances {
+            let position = instance.position;
+            if cam_position.y < position.y + 3.0 && cam_position.y > position.y + 1.0 {
+                // check x position
+                if (position.x - gap < cam_position.x && cam_position.x < position.x - gap - range)
+                    || (position.x + gap > cam_position.x
+                        && cam_position.x < position.x + gap + range)
+                {
+                    self.camera.position.x = if position.x > cam_position.x {
+                        position.x - gap - range
+                    } else {
+                        position.x + gap + range
+                    };
+                }
+                //check z postion
+                if (position.z + gap < cam_position.z && cam_position.z < position.z + gap + range)
+                    || (position.z - gap > cam_position.z
+                        && cam_position.z < position.z - gap - range)
+                {
+                    self.camera.position.z = if position.z > cam_position.z {
+                        position.z + gap + range
+                    } else {
+                        position.z - gap - range
+                    };
+                }
+            }
+        }
     }
 
     fn right_stick_move(&mut self, x: f32, y: f32) {
@@ -758,12 +793,17 @@ impl<'a> State<'a> {
         let cam_position = self.camera.position;
         for instance in &self.instances {
             let position = instance.position;
-            let gap = 1.0;
-            if (cam_position.y > position.y + 2.0 && position.y + 5.0 > cam_position.y)
+            let gap = 1.5;
+            if (cam_position.y >= position.y + 3.0 && position.y + 5.0 > cam_position.y)
                 && (position.x - gap < cam_position.x && cam_position.x < position.x + gap)
                 && (position.z - gap < cam_position.z && cam_position.z < position.z + gap)
             {
                 self.is_on_ground = true;
+                self.camera.position.y = if cam_position.y < position.y + 4.0 {
+                    position.y + 4.0
+                } else {
+                    cam_position.y
+                };
                 return;
             } else {
                 self.is_on_ground = false;

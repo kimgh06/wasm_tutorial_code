@@ -169,15 +169,15 @@ impl CameraController {
         if self.is_on_ground {
             self.is_jumping = true;
             self.is_on_ground = false;
-            self.veloctiy = 15.0;
-            camera.position.y += self.veloctiy * dt;
+            self.veloctiy = 12.0;
+            camera.position.y += self.veloctiy * dt + 0.5;
         }
     }
 
     pub fn falling(&mut self, camera: &mut Camera, dt: f32) {
         if !self.is_on_ground {
             self.is_jumping = true;
-            self.veloctiy -= 1.0 * 9.8 * dt;
+            self.veloctiy -= 4.0 * 9.8 * dt;
             camera.position.y += self.veloctiy * dt;
         } else {
             self.veloctiy = 0.0;
