@@ -751,42 +751,55 @@ impl<'a> State<'a> {
     }
 
     fn left_stick_move(&mut self, x: f32, y: f32) {
-        let speed = 0.3;
+        let speed = 0.2;
         self.camera_controller.left_stick_move(x * speed, y * speed);
+    }
+
+    fn check_wall_crush(&mut self) {
         let cam_position = self.camera.position;
         let gap = 1.5;
-        let range = 0.001;
+        let range = 0.01;
         for instance in &self.instances {
             let position = instance.position;
             if cam_position.y < position.y + 3.0 && cam_position.y > position.y + 1.0 {
                 // check x position
-                if (position.x - gap < cam_position.x && cam_position.x < position.x - gap - range)
+                if ((position.x - gap > cam_position.x
+                    && cam_position.x > position.x - gap - range)
                     || (position.x + gap > cam_position.x
-                        && cam_position.x < position.x + gap + range)
+                        && cam_position.x < position.x + gap + range))
+                    && (position.z - gap < cam_position.z && cam_position.z < position.z + gap)
+                    && ((position.x - cam_position.x).abs() > (position.z - cam_position.z).abs())
                 {
                     self.camera.position.x = if position.x > cam_position.x {
                         position.x - gap - range
                     } else {
                         position.x + gap + range
                     };
+                    return;
                 }
                 //check z postion
-                if (position.z + gap < cam_position.z && cam_position.z < position.z + gap + range)
-                    || (position.z - gap > cam_position.z
-                        && cam_position.z < position.z - gap - range)
+                if ((position.z - gap > cam_position.z
+                    && cam_position.z > position.z - gap - range)
+                    || (position.z + gap > cam_position.z
+                        && cam_position.z < position.z + gap + range))
+                    && (position.x - gap < cam_position.x && cam_position.x < position.x + gap)
+                    && ((position.x - cam_position.x).abs() < (position.z - cam_position.z).abs())
                 {
                     self.camera.position.z = if position.z > cam_position.z {
-                        position.z + gap + range
-                    } else {
                         position.z - gap - range
+                    } else {
+                        position.z + gap + range
                     };
+                    return;
                 }
             }
         }
     }
 
     fn right_stick_move(&mut self, x: f32, y: f32) {
-        self.camera_controller.right_stick_move(x, y);
+        let speed = 1.2;
+        self.camera_controller
+            .right_stick_move(x * speed, y * speed);
     }
 
     fn check_fall(&mut self) {
@@ -854,6 +867,8 @@ impl<'a> State<'a> {
         }
 
         self.check_fall();
+        self.check_wall_crush();
+
         self.camera_controller
             .update_camera(&mut self.camera, self.is_on_ground, dt);
         self.camera_uniform
