@@ -34,7 +34,7 @@ mod debug;
 
 use model::{DrawLight, DrawModel, Vertex};
 
-const NUM_INSTANCES_PER_ROW: u32 = 10;
+const NUM_INSTANCES_PER_ROW: i32 = 5;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -385,35 +385,31 @@ impl<'a> State<'a> {
         });
 
         const SPACE_BETWEEN: f32 = 2.0;
-        let mut instances = (0..NUM_INSTANCES_PER_ROW)
-            .flat_map(|z| {
-                (0..NUM_INSTANCES_PER_ROW).flat_map(move |x| {
-                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+        let mut instances = (-NUM_INSTANCES_PER_ROW..NUM_INSTANCES_PER_ROW)
+            .flat_map(|y| {
+                (-(y + NUM_INSTANCES_PER_ROW)..(y + NUM_INSTANCES_PER_ROW)).flat_map(move |x| {
+                    let positions = (-(y + NUM_INSTANCES_PER_ROW)..(y + NUM_INSTANCES_PER_ROW))
+                        .map(move |z| {
+                            let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32);
+                            let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32);
+                            let y =
+                                -SPACE_BETWEEN * (y as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                            let position = cgmath::Vector3 { x, y, z };
 
-                    let positions = (3..6).map(move |y| {
-                        let y = SPACE_BETWEEN * (y as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                            let rotation = if position.is_zero() {
+                                cgmath::Quaternion::from_axis_angle(
+                                    cgmath::Vector3::unit_z(),
+                                    cgmath::Deg(0.0),
+                                )
+                            } else {
+                                cgmath::Quaternion::from_axis_angle(
+                                    position.normalize(),
+                                    cgmath::Deg(0.0),
+                                )
+                            };
 
-                        let position = cgmath::Vector3 {
-                            x: x - (y - 5.0),
-                            y,
-                            z: z - (y - 5.0),
-                        };
-
-                        let rotation = if position.is_zero() {
-                            cgmath::Quaternion::from_axis_angle(
-                                cgmath::Vector3::unit_z(),
-                                cgmath::Deg(0.0),
-                            )
-                        } else {
-                            cgmath::Quaternion::from_axis_angle(
-                                position.normalize(),
-                                cgmath::Deg(0.0),
-                            )
-                        };
-
-                        Instance { position, rotation }
-                    });
+                            Instance { position, rotation }
+                        });
 
                     positions.collect::<Vec<_>>()
                 })
@@ -763,12 +759,11 @@ impl<'a> State<'a> {
             let position = instance.position;
             if cam_position.y < position.y + 3.0 && cam_position.y > position.y + 1.0 {
                 // check x position
-                if ((position.x - gap > cam_position.x
-                    && cam_position.x > position.x - gap - range)
-                    || (position.x + gap > cam_position.x
-                        && cam_position.x < position.x + gap + range))
+                if ((position.x > cam_position.x && cam_position.x > position.x - gap - range)
+                    || (position.x < cam_position.x && cam_position.x < position.x + gap + range))
                     && (position.z - gap < cam_position.z && cam_position.z < position.z + gap)
-                    && ((position.x - cam_position.x).abs() > (position.z - cam_position.z).abs())
+                    && ((position.x.abs() - cam_position.x.abs()).abs()
+                        > (position.z.abs() - cam_position.z.abs()).abs())
                 {
                     self.camera.position.x = if position.x > cam_position.x {
                         position.x - gap - range
@@ -778,12 +773,11 @@ impl<'a> State<'a> {
                     return;
                 }
                 //check z postion
-                if ((position.z - gap > cam_position.z
-                    && cam_position.z > position.z - gap - range)
-                    || (position.z + gap > cam_position.z
-                        && cam_position.z < position.z + gap + range))
+                if ((position.z > cam_position.z && cam_position.z > position.z - gap - range)
+                    || (position.z < cam_position.z && cam_position.z < position.z + gap + range))
                     && (position.x - gap < cam_position.x && cam_position.x < position.x + gap)
-                    && ((position.x - cam_position.x).abs() < (position.z - cam_position.z).abs())
+                    && ((position.x.abs() - cam_position.x.abs()).abs()
+                        < (position.z.abs() - cam_position.z.abs()).abs())
                 {
                     self.camera.position.z = if position.z > cam_position.z {
                         position.z - gap - range
