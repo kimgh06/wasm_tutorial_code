@@ -1,4 +1,5 @@
 use cgmath::*;
+use gltf::camera;
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 use web_sys::console;
@@ -7,6 +8,7 @@ use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
 
+use super::instance::Instance;
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
 #[derive(Debug)]
@@ -185,16 +187,138 @@ impl CameraController {
         }
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, is_on_ground: bool, dt: Duration) {
+    // fn check_wall_crush(&mut self, instances: Vec<Instance>) {
+    //     let cam_position = self.position;
+    //     let gap = 1.5;
+    //     let range = 0.01;
+    //     let mut is_set_position = false;
+    //     for instance in instances {
+    //         let position = instance.position;
+    //         if cam_position.y < position.y + 3.0 && cam_position.y > position.y + 1.0 {
+    //             // check x position
+    //             if ((position.x > cam_position.x && cam_position.x > position.x - gap - range)
+    //                 || (position.x < cam_position.x && cam_position.x < position.x + gap + range))
+    //                 && (position.z - gap < cam_position.z && cam_position.z < position.z + gap)
+    //                 && ((position.x.abs() - cam_position.x.abs()).abs()
+    //                     >= (position.z.abs() - cam_position.z.abs()).abs())
+    //             {
+    //                 self.camera.position.x = if position.x > cam_position.x {
+    //                     position.x - gap - range
+    //                 } else {
+    //                     position.x + gap + range
+    //                 };
+    //                 console::log_1(&"repositionning x".into());
+    //                 is_set_position = true;
+    //             }
+    //             //check z postion
+    //             if ((position.z > cam_position.z && cam_position.z > position.z - gap - range)
+    //                 || (position.z < cam_position.z && cam_position.z < position.z + gap + range))
+    //                 && (position.x - gap < cam_position.x && cam_position.x < position.x + gap)
+    //                 && ((position.x.abs() - cam_position.x.abs()).abs()
+    //                     <= (position.z.abs() - cam_position.z.abs()).abs())
+    //             {
+    //                 self.camera.position.z = if position.z > cam_position.z {
+    //                     position.z - gap - range
+    //                 } else {
+    //                     position.z + gap + range
+    //                 };
+    //                 console::log_1(&"repositionning z".into());
+    //                 is_set_position = true;
+    //             }
+    //             if is_set_position {
+    //                 return;
+    //             }
+    //         }
+    //     }
+    // }
+
+    fn check_x_wall_crush(
+        camera: &mut Camera,
+        plus_x: Vector3<f32>,
+        instances: &Vec<Instance>,
+    ) -> bool {
+        let gap = 1.5;
+        let range = 0.07;
+        let camera_position = camera.position + plus_x;
+
+        for instance in instances {
+            let position = instance.position;
+            if camera_position.y < position.y + 3.0 && camera_position.y > position.y + 1.0 {
+                if ((position.x > camera_position.x
+                    && camera_position.x > position.x - gap - range)
+                    || (position.x < camera_position.x
+                        && camera_position.x < position.x + gap + range))
+                    && (position.z - gap < camera_position.z
+                        && camera_position.z < position.z + gap)
+                    && ((position.x.abs() - camera_position.x.abs()).abs()
+                        >= (position.z.abs() - camera_position.z.abs()).abs())
+                {
+                    camera.position.x += if position.x > camera_position.x {
+                        -range
+                    } else {
+                        range
+                    };
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn check_z_wall_crush(
+        camera: &mut Camera,
+        plus_z: Vector3<f32>,
+        instances: &Vec<Instance>,
+    ) -> bool {
+        let gap = 1.5;
+        let range = 0.07;
+        let camera_position = camera.position + plus_z;
+
+        for instance in instances {
+            let position = instance.position;
+            if camera_position.y < position.y + 3.0 && camera_position.y > position.y + 1.0 {
+                if ((position.z > camera_position.z
+                    && camera_position.z > position.z - gap - range)
+                    || (position.z < camera_position.z
+                        && camera_position.z < position.z + gap + range))
+                    && (position.x - gap < camera_position.x
+                        && camera_position.x < position.x + gap)
+                    && ((position.x.abs() - camera_position.x.abs()).abs()
+                        <= (position.z.abs() - camera_position.z.abs()).abs())
+                {
+                    camera.position.z += if position.z > camera_position.z {
+                        -range
+                    } else {
+                        range
+                    };
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    pub fn update_camera(
+        &mut self,
+        camera: &mut Camera,
+        is_on_ground: bool,
+        dt: Duration,
+        instances: &Vec<Instance>,
+    ) {
         let dt = dt.as_secs_f32();
 
         // Move forward/backward and left/right
         let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
-        camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
-        camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
-
+        let plus_x = forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
+        let plus_z = right * (self.amount_right - self.amount_left) * self.speed * dt;
+        if Self::check_x_wall_crush(camera, plus_x, instances) {
+            camera.position += plus_x;
+        }
+        if Self::check_z_wall_crush(camera, plus_z, instances) {
+            camera.position += plus_z;
+        }
         // Move in/out (aka. "zoom")
         let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
         let scrollward =

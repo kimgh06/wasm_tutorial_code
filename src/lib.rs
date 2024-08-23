@@ -4,6 +4,7 @@ extern crate wasm_bindgen;
 use std::{f32::consts::PI, iter};
 
 use cgmath::{prelude::*, Quaternion, Vector3};
+use instance::Instance;
 use wgpu::util::DeviceExt;
 use winit::{
     dpi::PhysicalPosition,
@@ -24,6 +25,7 @@ use web_sys::{console, wasm_bindgen::JsCast, Gamepad, GamepadButton};
 
 mod camera;
 mod hdr;
+mod instance;
 mod model;
 // mod model_gltf;
 mod resources;
@@ -34,7 +36,7 @@ mod debug;
 
 use model::{DrawLight, DrawModel, Vertex};
 
-const NUM_INSTANCES_PER_ROW: i32 = 5;
+const NUM_INSTANCES_PER_ROW: i32 = 10;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -67,37 +69,6 @@ impl CameraUniform {
         self.view_proj = view_proj.into();
         self.inv_proj = proj.invert().unwrap().into();
         self.inv_view = view.transpose().into();
-    }
-}
-
-struct Instance {
-    position: cgmath::Vector3<f32>,
-    rotation: cgmath::Quaternion<f32>,
-}
-
-impl Instance {
-    fn to_raw(&self) -> InstanceRaw {
-        InstanceRaw {
-            model: (cgmath::Matrix4::from_translation(self.position)
-                * cgmath::Matrix4::from(self.rotation))
-            .into(),
-            normal: cgmath::Matrix3::from(self.rotation).into(),
-        }
-    }
-    pub fn update_rotation(&mut self, delta_time_secs: f32, rotation_speed_deg_per_sec: f32) {
-        let y_delta_rotation = Quaternion::from_axis_angle(
-            Vector3::unit_y(),
-            cgmath::Deg(rotation_speed_deg_per_sec * delta_time_secs / 1.7),
-        );
-        let z_delta_rotation = Quaternion::from_axis_angle(
-            Vector3::unit_z(),
-            cgmath::Deg(rotation_speed_deg_per_sec * delta_time_secs / 1.9),
-        );
-        let x_delta_rotation = Quaternion::from_axis_angle(
-            Vector3::unit_x(),
-            cgmath::Deg(rotation_speed_deg_per_sec * delta_time_secs),
-        );
-        self.rotation = self.rotation * z_delta_rotation * x_delta_rotation;
     }
 }
 
@@ -751,45 +722,6 @@ impl<'a> State<'a> {
         self.camera_controller.left_stick_move(x * speed, y * speed);
     }
 
-    fn check_wall_crush(&mut self) {
-        let cam_position = self.camera.position;
-        let gap = 1.5;
-        let range = 0.01;
-        for instance in &self.instances {
-            let position = instance.position;
-            if cam_position.y < position.y + 3.0 && cam_position.y > position.y + 1.0 {
-                // check x position
-                if ((position.x > cam_position.x && cam_position.x > position.x - gap - range)
-                    || (position.x < cam_position.x && cam_position.x < position.x + gap + range))
-                    && (position.z - gap < cam_position.z && cam_position.z < position.z + gap)
-                    && ((position.x.abs() - cam_position.x.abs()).abs()
-                        > (position.z.abs() - cam_position.z.abs()).abs())
-                {
-                    self.camera.position.x = if position.x > cam_position.x {
-                        position.x - gap - range
-                    } else {
-                        position.x + gap + range
-                    };
-                    return;
-                }
-                //check z postion
-                if ((position.z > cam_position.z && cam_position.z > position.z - gap - range)
-                    || (position.z < cam_position.z && cam_position.z < position.z + gap + range))
-                    && (position.x - gap < cam_position.x && cam_position.x < position.x + gap)
-                    && ((position.x.abs() - cam_position.x.abs()).abs()
-                        < (position.z.abs() - cam_position.z.abs()).abs())
-                {
-                    self.camera.position.z = if position.z > cam_position.z {
-                        position.z - gap - range
-                    } else {
-                        position.z + gap + range
-                    };
-                    return;
-                }
-            }
-        }
-    }
-
     fn right_stick_move(&mut self, x: f32, y: f32) {
         let speed = 1.2;
         self.camera_controller
@@ -829,6 +761,7 @@ impl<'a> State<'a> {
         let window = web_sys::window().expect("no global `window` exists");
         let navigator: web_sys::Navigator = window.navigator();
 
+        self.check_fall();
         if let Some(gamepad_list) = navigator.get_gamepads().ok() {
             for i in 0..gamepad_list.length() {
                 let gamepad_jv = gamepad_list.get(i);
@@ -860,11 +793,12 @@ impl<'a> State<'a> {
             }
         }
 
-        self.check_fall();
-        self.check_wall_crush();
-
-        self.camera_controller
-            .update_camera(&mut self.camera, self.is_on_ground, dt);
+        self.camera_controller.update_camera(
+            &mut self.camera,
+            self.is_on_ground,
+            dt,
+            &self.instances,
+        );
         self.camera_uniform
             .update_view_proj(&self.camera, &self.projection);
         self.queue.write_buffer(
