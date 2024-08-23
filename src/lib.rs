@@ -179,6 +179,7 @@ pub struct State<'a> {
     rotate: f32,
     is_jumping: bool,
     is_on_ground: bool,
+    is_running: bool,
     position: PhysicalPosition<f64>,
 }
 
@@ -615,6 +616,7 @@ impl<'a> State<'a> {
 
         let is_jumping = false;
         let is_on_ground = true;
+        let is_running = false;
 
         #[cfg(feature = "debug")]
         let debug = debug::Debug::new(&device, &camera_bind_group_layout, surface_format);
@@ -651,6 +653,7 @@ impl<'a> State<'a> {
             sky_pipeline,
             is_jumping,
             is_on_ground,
+            is_running,
 
             #[cfg(feature = "debug")]
             debug,
@@ -718,7 +721,9 @@ impl<'a> State<'a> {
     }
 
     fn left_stick_move(&mut self, x: f32, y: f32) {
-        let speed = 0.2;
+        let speed = 0.2
+            * if self.is_on_ground { 1.0 } else { 0.8 }
+            * if self.is_running { 2.0 } else { 1.0 };
         self.camera_controller.left_stick_move(x * speed, y * speed);
     }
 
@@ -788,6 +793,10 @@ impl<'a> State<'a> {
                         if is_jumping {
                             self.camera_controller.jump(&mut self.camera, dt);
                         }
+                        //run
+                        let run: GamepadButton = buttons.get(2).unchecked_into();
+                        let is_running = run.pressed();
+                        self.is_running = is_running;
                     }
                 }
             }
