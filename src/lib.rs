@@ -3,21 +3,30 @@ extern crate wasm_bindgen;
 
 use std::{f32::consts::PI, iter};
 
-use cgmath::prelude::*;
+use cgmath::{prelude::*, Quaternion, Vector3};
+use instance::Instance;
 use wgpu::util::DeviceExt;
 use winit::{
+    dpi::PhysicalPosition,
     event::*,
     event_loop::EventLoop,
     keyboard::{KeyCode, PhysicalKey},
-    window::Window,
+    window::{CursorGrabMode, Window},
 };
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+use wasm_bindgen::JsValue;
+
+use serde_json;
+use web_sys::{console, wasm_bindgen::JsCast, Gamepad, GamepadButton};
+
 mod camera;
 mod hdr;
+mod instance;
 mod model;
+// mod model_gltf;
 mod resources;
 mod texture;
 
@@ -26,7 +35,7 @@ mod debug;
 
 use model::{DrawLight, DrawModel, Vertex};
 
-const NUM_INSTANCES_PER_ROW: u32 = 10;
+const NUM_INSTANCES_PER_ROW: i32 = 10;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -150,7 +159,7 @@ struct LightUniform {
     _padding2: u32,
 }
 
-struct State<'a> {
+pub struct State<'a> {
     window: &'a Window,
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
@@ -182,6 +191,11 @@ struct State<'a> {
     sky_pipeline: wgpu::RenderPipeline,
     #[cfg(feature = "debug")]
     debug: debug::Debug,
+    rotate: f32,
+    is_jumping: bool,
+    is_on_ground: bool,
+    is_running: bool,
+    position: PhysicalPosition<f64>,
 }
 
 fn create_render_pipeline(
@@ -280,7 +294,7 @@ impl<'a> State<'a> {
             )
             .await
             .unwrap();
-
+        let mut position = PhysicalPosition::new(0.0, 0.0);
         let surface_caps = surface.get_capabilities(&adapter);
         // Shader code in this tutorial assumes an Srgb surface texture. Using a different
         // one will result all the colors comming out darker. If you want to support non
@@ -346,7 +360,7 @@ impl<'a> State<'a> {
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection =
             camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
-        let camera_controller = camera::CameraController::new(4.0, 0.4);
+        let camera_controller = camera::CameraController::new(20.0, 0.8);
 
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera, &projection);
@@ -357,31 +371,41 @@ impl<'a> State<'a> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        const SPACE_BETWEEN: f32 = 3.0;
-        let instances = (0..NUM_INSTANCES_PER_ROW)
-            .flat_map(|z| {
-                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+        const SPACE_BETWEEN: f32 = 2.0;
+        let mut instances = (-NUM_INSTANCES_PER_ROW..NUM_INSTANCES_PER_ROW)
+            .flat_map(|y| {
+                (-(y + NUM_INSTANCES_PER_ROW)..(y + NUM_INSTANCES_PER_ROW)).flat_map(move |x| {
+                    let positions = (-(y + NUM_INSTANCES_PER_ROW)..(y + NUM_INSTANCES_PER_ROW))
+                        .map(move |z| {
+                            let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32);
+                            let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32);
+                            let y =
+                                -SPACE_BETWEEN * (y as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                            let position = cgmath::Vector3 { x, y, z };
 
-                    let position = cgmath::Vector3 { x, y: 0.0, z };
+                            let rotation = if position.is_zero() {
+                                cgmath::Quaternion::from_axis_angle(
+                                    cgmath::Vector3::unit_z(),
+                                    cgmath::Deg(0.0),
+                                )
+                            } else {
+                                cgmath::Quaternion::from_axis_angle(
+                                    position.normalize(),
+                                    cgmath::Deg(0.0),
+                                )
+                            };
 
-                    let rotation = if position.is_zero() {
-                        cgmath::Quaternion::from_axis_angle(
-                            cgmath::Vector3::unit_z(),
-                            cgmath::Deg(0.0),
-                        )
-                    } else {
-                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-                    };
+                            Instance { position, rotation }
+                        });
 
-                    Instance { position, rotation }
+                    positions.collect::<Vec<_>>()
                 })
             })
             .collect::<Vec<_>>();
 
-        let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let mut rotate: f32 = 0.0;
+        let mut instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+        let mut instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&instance_data),
             usage: wgpu::BufferUsages::VERTEX,
@@ -605,6 +629,10 @@ impl<'a> State<'a> {
             )
         };
 
+        let is_jumping = false;
+        let is_on_ground = true;
+        let is_running = false;
+
         #[cfg(feature = "debug")]
         let debug = debug::Debug::new(&device, &camera_bind_group_layout, surface_format);
 
@@ -633,10 +661,14 @@ impl<'a> State<'a> {
             #[allow(dead_code)]
             debug_material,
             mouse_pressed: false,
+            position,
             // NEW!
             hdr,
             environment_bind_group,
             sky_pipeline,
+            is_jumping,
+            is_on_ground,
+            is_running,
 
             #[cfg(feature = "debug")]
             debug,
@@ -677,20 +709,119 @@ impl<'a> State<'a> {
                 self.camera_controller.process_scroll(delta);
                 true
             }
-            WindowEvent::MouseInput {
-                button: MouseButton::Left,
-                state,
-                ..
-            } => {
-                self.mouse_pressed = *state == ElementState::Pressed;
-                true
+            WindowEvent::MouseInput { button, state, .. } => {
+                if *button == MouseButton::Left {
+                    if *state == ElementState::Pressed {
+                        self.window
+                            .set_cursor_grab(CursorGrabMode::Locked)
+                            .expect("Failed to grab cursor");
+                        true
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                }
             }
             _ => false,
         }
     }
 
+    fn log_gamepad(&mut self, gamepad: &Gamepad) {
+        // console::log_1(&format!("Gamepad: {:?}", gamepad).into());
+        // console::log_1(&format!("Connected: {:?}", gamepad.connected()).into());
+        // console::log_1(&format!("Timestamp: {:?}", gamepad.timestamp()).into());
+        console::log_1(&format!("Buttons: {:?}", gamepad.buttons()).into());
+    }
+
+    fn left_stick_move(&mut self, x: f32, y: f32) {
+        let speed = 0.2
+            * if self.is_on_ground { 1.0 } else { 0.8 }
+            * if self.is_running { 2.0 } else { 1.0 };
+        self.camera_controller.left_stick_move(x * speed, y * speed);
+    }
+
+    fn right_stick_move(&mut self, x: f32, y: f32) {
+        let speed = 1.2;
+        self.camera_controller
+            .right_stick_move(x * speed, y * speed);
+    }
+
+    fn check_fall(&mut self) {
+        let cam_position = self.camera.position;
+        for instance in &self.instances {
+            let position = instance.position;
+            let gap = 1.5;
+            if (cam_position.y >= position.y + 3.0 && position.y + 5.0 > cam_position.y)
+                && (position.x - gap < cam_position.x && cam_position.x < position.x + gap)
+                && (position.z - gap < cam_position.z && cam_position.z < position.z + gap)
+            {
+                self.is_on_ground = true;
+                self.camera.position.y = if cam_position.y < position.y + 4.0 {
+                    position.y + 4.0
+                } else {
+                    cam_position.y
+                };
+                return;
+            } else {
+                self.is_on_ground = false;
+            }
+            // console::log_1(
+            //     &format!(
+            //         "cam: {:?} position: {:?} is_on_ground: {:?}",
+            //         self.camera.position.y, position.y, self.is_on_ground
+            //     )
+            //     .into(),
+            // );
+        }
+    }
+
     fn update(&mut self, dt: std::time::Duration) {
-        self.camera_controller.update_camera(&mut self.camera, dt);
+        let window = web_sys::window().expect("no global `window` exists");
+        let navigator: web_sys::Navigator = window.navigator();
+
+        self.check_fall();
+        if let Some(gamepad_list) = navigator.get_gamepads().ok() {
+            for i in 0..gamepad_list.length() {
+                let gamepad_jv = gamepad_list.get(i);
+                if !gamepad_jv.is_null() && !gamepad_jv.is_undefined() {
+                    let gamepad: Gamepad = gamepad_jv.unchecked_into();
+                    if !gamepad.is_undefined() && !gamepad.is_null() {
+                        let axes = gamepad.axes();
+                        let buttons = gamepad.buttons();
+                        // moving
+                        let mut x: f32 = axes.get(0).as_f64().unwrap_or(0.0) as f32;
+                        let mut y: f32 = axes.get(1).as_f64().unwrap_or(0.0) as f32;
+                        x = if x.abs() > 0.1 { x } else { 0.0 };
+                        y = if y.abs() > 0.1 { y } else { 0.0 };
+                        self.left_stick_move(x, y);
+                        // looking
+                        let mut horizon: f32 = axes.get(2).as_f64().unwrap_or(0.0) as f32;
+                        let mut vertical: f32 = axes.get(3).as_f64().unwrap_or(0.0) as f32;
+                        horizon = if horizon.abs() > 0.1 { horizon } else { 0.0 };
+                        vertical = if vertical.abs() > 0.1 { vertical } else { 0.0 };
+                        self.right_stick_move(horizon, vertical);
+                        //jump
+                        let jump: GamepadButton = buttons.get(0).unchecked_into();
+                        let is_jumping = jump.pressed();
+                        if is_jumping {
+                            self.camera_controller.jump(&mut self.camera, dt);
+                        }
+                        //run
+                        let run: GamepadButton = buttons.get(2).unchecked_into();
+                        let is_running = run.pressed();
+                        self.is_running = is_running;
+                    }
+                }
+            }
+        }
+
+        self.camera_controller.update_camera(
+            &mut self.camera,
+            self.is_on_ground,
+            dt,
+            &self.instances,
+        );
         self.camera_uniform
             .update_view_proj(&self.camera, &self.projection);
         self.queue.write_buffer(
@@ -699,7 +830,25 @@ impl<'a> State<'a> {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
 
-        // Update the light
+        // self.rotate = (self.rotate + 10.0) % 1000.0;
+        // for i in &mut self.instances {
+        //     i.update_rotation(dt.as_secs_f32(), self.rotate);
+        // }
+
+        let instance_data = self
+            .instances
+            .iter()
+            .map(Instance::to_raw)
+            .collect::<Vec<_>>();
+
+        self.instance_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Instance Buffer"),
+                contents: bytemuck::cast_slice(&instance_data),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
         let old_position: cgmath::Vector3<_> = self.light_uniform.position.into();
         self.light_uniform.position = (cgmath::Quaternion::from_axis_angle(
             (0.0, 1.0, 0.0).into(),
@@ -810,10 +959,11 @@ impl<'a> State<'a> {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
 pub async fn run() {
     cfg_if::cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            console_log::init_with_level(log::Level::Info).expect("Could't initialize logger");
-        } else {
+    if #[cfg(target_arch = "wasm32")] {
+        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+        console_log::init_with_level(log::Level::Info).expect("Could't initialize logger");
+        }
+        else {
             env_logger::init();
         }
     }
@@ -846,19 +996,20 @@ pub async fn run() {
 
     let mut state = State::new(&window).await.unwrap();
     let mut last_render_time = instant::Instant::now();
-    event_loop.run(move |event, control_flow| {
+    event_loop.run(move |event: Event<()>, control_flow| {
+        // console::log_1(&format!("{:?}", control_flow).into());
         match event {
             Event::DeviceEvent {
                 event: DeviceEvent::MouseMotion{ delta, },
                 .. // We're not using device_id currently
-            } => if state.mouse_pressed {
-                state.camera_controller.process_mouse(delta.0, delta.1)
+                } => if state.mouse_pressed {
+                    state.camera_controller.process_mouse(delta.0, delta.1)
             }
             // UPDATED!
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == state.window().id() && !state.input(event) => {
+                } if window_id == state.window().id() && !state.input(event) => {
                 match event {
                     #[cfg(not(target_arch="wasm32"))]
                     WindowEvent::CloseRequested
@@ -874,7 +1025,15 @@ pub async fn run() {
                     WindowEvent::Resized(physical_size) => {
                         state.resize(*physical_size);
                     }
-                    // UPDATED!
+                    WindowEvent::CursorMoved { position, .. } => {
+                        if state.position != *position{
+                            state.mouse_pressed = false;
+                            state.position = position.clone();
+                        }
+                        else{
+                            state.mouse_pressed = true;
+                        }
+                    }
                     WindowEvent::RedrawRequested => {
                         state.window().request_redraw();
                         let now = instant::Instant::now();

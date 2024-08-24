@@ -1,10 +1,14 @@
 use cgmath::*;
+use gltf::camera;
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
+use web_sys::console;
+use web_sys::wasm_bindgen::JsValue;
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
 
+use super::instance::Instance;
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
 #[derive(Debug)]
@@ -61,7 +65,6 @@ impl Projection {
     }
 
     pub fn calc_matrix(&self) -> Matrix4<f32> {
-        // UDPATE
         perspective(self.fovy, self.aspect, self.znear, self.zfar)
     }
 }
@@ -78,6 +81,9 @@ pub struct CameraController {
     rotate_vertical: f32,
     scroll: f32,
     speed: f32,
+    veloctiy: f32,
+    is_jumping: bool,
+    is_on_ground: bool,
     sensitivity: f32,
 }
 
@@ -94,6 +100,9 @@ impl CameraController {
             rotate_vertical: 0.0,
             scroll: 0.0,
             speed,
+            veloctiy: 0.0,
+            is_jumping: false,
+            is_on_ground: true,
             sensitivity,
         }
     }
@@ -133,6 +142,18 @@ impl CameraController {
         }
     }
 
+    pub fn left_stick_move(&mut self, axis0: f32, axis1: f32) {
+        self.amount_forward = -axis1;
+        self.amount_backward = axis1;
+        self.amount_right = axis0;
+        self.amount_left = -axis0;
+    }
+
+    pub fn right_stick_move(&mut self, axis2: f32, axis3: f32) {
+        self.rotate_horizontal = axis2 * 2.5;
+        self.rotate_vertical = axis3 * 2.5;
+    }
+
     pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
         self.rotate_horizontal = mouse_dx as f32;
         self.rotate_vertical = mouse_dy as f32;
@@ -140,51 +161,199 @@ impl CameraController {
 
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
         self.scroll = match delta {
-            // I'm assuming a line is about 100 pixels
             MouseScrollDelta::LineDelta(_, scroll) => -scroll * 0.5,
             MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
         };
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
+    pub fn jump(&mut self, camera: &mut Camera, dt: Duration) {
+        let dt = dt.as_secs_f32();
+        if self.is_on_ground {
+            self.is_jumping = true;
+            self.is_on_ground = false;
+            self.veloctiy = 12.0;
+            camera.position.y += self.veloctiy * dt + 0.5;
+        }
+    }
+
+    pub fn falling(&mut self, camera: &mut Camera, dt: f32) {
+        if !self.is_on_ground {
+            self.is_jumping = true;
+            self.veloctiy -= 4.0 * 9.8 * dt;
+            camera.position.y += self.veloctiy * dt;
+        } else {
+            self.veloctiy = 0.0;
+            self.is_jumping = false;
+        }
+    }
+
+    // fn check_wall_crush(&mut self, instances: Vec<Instance>) {
+    //     let cam_position = self.position;
+    //     let gap = 1.5;
+    //     let range = 0.01;
+    //     let mut is_set_position = false;
+    //     for instance in instances {
+    //         let position = instance.position;
+    //         if cam_position.y < position.y + 3.0 && cam_position.y > position.y + 1.0 {
+    //             // check x position
+    //             if ((position.x > cam_position.x && cam_position.x > position.x - gap - range)
+    //                 || (position.x < cam_position.x && cam_position.x < position.x + gap + range))
+    //                 && (position.z - gap < cam_position.z && cam_position.z < position.z + gap)
+    //                 && ((position.x.abs() - cam_position.x.abs()).abs()
+    //                     >= (position.z.abs() - cam_position.z.abs()).abs())
+    //             {
+    //                 self.camera.position.x = if position.x > cam_position.x {
+    //                     position.x - gap - range
+    //                 } else {
+    //                     position.x + gap + range
+    //                 };
+    //                 console::log_1(&"repositionning x".into());
+    //                 is_set_position = true;
+    //             }
+    //             //check z postion
+    //             if ((position.z > cam_position.z && cam_position.z > position.z - gap - range)
+    //                 || (position.z < cam_position.z && cam_position.z < position.z + gap + range))
+    //                 && (position.x - gap < cam_position.x && cam_position.x < position.x + gap)
+    //                 && ((position.x.abs() - cam_position.x.abs()).abs()
+    //                     <= (position.z.abs() - cam_position.z.abs()).abs())
+    //             {
+    //                 self.camera.position.z = if position.z > cam_position.z {
+    //                     position.z - gap - range
+    //                 } else {
+    //                     position.z + gap + range
+    //                 };
+    //                 console::log_1(&"repositionning z".into());
+    //                 is_set_position = true;
+    //             }
+    //             if is_set_position {
+    //                 return;
+    //             }
+    //         }
+    //     }
+    // }
+
+    fn check_x_wall_crush(
+        camera: &mut Camera,
+        plus_x: Vector3<f32>,
+        instances: &Vec<Instance>,
+    ) -> bool {
+        let gap = 1.5;
+        let range = 0.07;
+        let camera_position = camera.position + plus_x;
+
+        for instance in instances {
+            let position = instance.position;
+            if camera_position.y < position.y + 3.0 && camera_position.y > position.y + 1.0 {
+                if ((position.x > camera_position.x
+                    && camera_position.x > position.x - gap - range)
+                    || (position.x < camera_position.x
+                        && camera_position.x < position.x + gap + range))
+                    && (position.z - gap < camera_position.z
+                        && camera_position.z < position.z + gap)
+                    && ((position.x.abs() - camera_position.x.abs()).abs()
+                        >= (position.z.abs() - camera_position.z.abs()).abs())
+                {
+                    camera.position.x += if position.x > camera_position.x {
+                        -range
+                    } else {
+                        range
+                    };
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn check_z_wall_crush(
+        camera: &mut Camera,
+        plus_z: Vector3<f32>,
+        instances: &Vec<Instance>,
+    ) -> bool {
+        let gap = 1.5;
+        let range = 0.07;
+        let camera_position = camera.position + plus_z;
+
+        for instance in instances {
+            let position = instance.position;
+            if camera_position.y < position.y + 3.0 && camera_position.y > position.y + 1.0 {
+                if ((position.z > camera_position.z
+                    && camera_position.z > position.z - gap - range)
+                    || (position.z < camera_position.z
+                        && camera_position.z < position.z + gap + range))
+                    && (position.x - gap < camera_position.x
+                        && camera_position.x < position.x + gap)
+                    && ((position.x.abs() - camera_position.x.abs()).abs()
+                        <= (position.z.abs() - camera_position.z.abs()).abs())
+                {
+                    camera.position.z += if position.z > camera_position.z {
+                        -range
+                    } else {
+                        range
+                    };
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    pub fn update_camera(
+        &mut self,
+        camera: &mut Camera,
+        is_on_ground: bool,
+        dt: Duration,
+        instances: &Vec<Instance>,
+    ) {
         let dt = dt.as_secs_f32();
 
         // Move forward/backward and left/right
         let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
-        camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
-        camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
-
+        let plus_x = forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
+        let plus_z = right * (self.amount_right - self.amount_left) * self.speed * dt;
+        if Self::check_x_wall_crush(camera, plus_x, instances) {
+            camera.position += plus_x;
+        }
+        if Self::check_z_wall_crush(camera, plus_z, instances) {
+            camera.position += plus_z;
+        }
         // Move in/out (aka. "zoom")
-        // Note: this isn't an actual zoom. The camera's position
-        // changes when zooming. I've added this to make it easier
-        // to get closer to an object you want to focus on.
         let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
         let scrollward =
             Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
         camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
         self.scroll = 0.0;
 
-        // Move up/down. Since we don't use roll, we can just
-        // modify the y coordinate directly.
+        // Move up/down
         camera.position.y += (self.amount_up - self.amount_down) * self.speed * dt;
 
         // Rotate
         camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
         camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
 
-        // If process_mouse isn't called every frame, these values
-        // will not get set to zero, and the camera will rotate
-        // when moving in a non cardinal direction.
+        // Reset rotation amounts
         self.rotate_horizontal = 0.0;
         self.rotate_vertical = 0.0;
 
-        // Keep the camera's angle from going too high/low.
+        //falling
+        self.is_on_ground = is_on_ground;
+        self.falling(camera, dt);
+
+        // Clamp pitch
         if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
             camera.pitch = -Rad(SAFE_FRAC_PI_2);
         } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
             camera.pitch = Rad(SAFE_FRAC_PI_2);
         }
+        // console::log_1(&JsValue::from_str(
+        //     &(String::from("x:")
+        //         + &camera.position.x.to_string()
+        //         + "\ny:"
+        //         + &camera.position.y.to_string()
+        //         + "\nz:"
+        //         + &camera.position.z.to_string()),
+        // ));
     }
 }
