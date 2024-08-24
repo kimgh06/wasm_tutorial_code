@@ -17,7 +17,6 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
 
 use serde_json;
@@ -69,6 +68,22 @@ impl CameraUniform {
         self.view_proj = view_proj.into();
         self.inv_proj = proj.invert().unwrap().into();
         self.inv_view = view.transpose().into();
+    }
+}
+
+struct Instance {
+    position: cgmath::Vector3<f32>,
+    rotation: cgmath::Quaternion<f32>,
+}
+
+impl Instance {
+    fn to_raw(&self) -> InstanceRaw {
+        InstanceRaw {
+            model: (cgmath::Matrix4::from_translation(self.position)
+                * cgmath::Matrix4::from(self.rotation))
+            .into(),
+            normal: cgmath::Matrix3::from(self.rotation).into(),
+        }
     }
 }
 
@@ -657,7 +672,6 @@ impl<'a> State<'a> {
 
             #[cfg(feature = "debug")]
             debug,
-            rotate,
         })
     }
 
@@ -838,10 +852,9 @@ impl<'a> State<'a> {
         let old_position: cgmath::Vector3<_> = self.light_uniform.position.into();
         self.light_uniform.position = (cgmath::Quaternion::from_axis_angle(
             (0.0, 1.0, 0.0).into(),
-            cgmath::Deg(std::f32::consts::PI * dt.as_secs_f32()),
+            cgmath::Deg(PI * dt.as_secs_f32()),
         ) * old_position)
             .into();
-
         self.queue.write_buffer(
             &self.light_buffer,
             0,
@@ -955,8 +968,6 @@ pub async fn run() {
         }
     }
 
-    let mut fps_counter = 0;
-    let mut fps_timer = instant::Instant::now();
     let event_loop = EventLoop::new().unwrap();
     let title = env!("CARGO_PKG_NAME");
     let window = winit::window::WindowBuilder::new()
@@ -1029,15 +1040,6 @@ pub async fn run() {
                         let dt = now - last_render_time;
                         last_render_time = now;
                         state.update(dt);
-
-                        fps_counter +=1;
-
-                        if fps_timer.elapsed().as_secs_f64() >= 1.0 {
-                            console::log_1(&fps_counter.to_string().into());
-                            fps_counter = 0;
-                            fps_timer = instant::Instant::now();
-                        }
-
                         match state.render() {
                             Ok(_) => {}
                             // Reconfigure the surface if it's lost or outdated
