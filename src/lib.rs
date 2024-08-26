@@ -179,7 +179,7 @@ pub struct State<'a> {
     rotate: f32,
     is_jumping: bool,
     is_on_ground: bool,
-    is_running: bool,
+    is_running: f64,
     position: PhysicalPosition<f64>,
 }
 
@@ -386,6 +386,24 @@ impl<'a> State<'a> {
                     positions.collect::<Vec<_>>()
                 })
             })
+            .chain((-50..50).flat_map(|x| {
+                (-50..50).map(move |z| {
+                    let position = cgmath::Vector3 {
+                        x: x as f32 * 2.0,
+                        y: -(NUM_INSTANCES_PER_ROW as f32),
+                        z: z as f32 * 2.0,
+                    };
+                    let rotation = if position.is_zero() {
+                        cgmath::Quaternion::from_axis_angle(
+                            cgmath::Vector3::unit_z(),
+                            cgmath::Deg(0.0),
+                        )
+                    } else {
+                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(0.0))
+                    };
+                    Instance { position, rotation }
+                })
+            }))
             .collect::<Vec<_>>();
 
         let mut rotate: f32 = 0.0;
@@ -616,7 +634,7 @@ impl<'a> State<'a> {
 
         let is_jumping = false;
         let is_on_ground = true;
-        let is_running = false;
+        let is_running = 0.0;
 
         #[cfg(feature = "debug")]
         let debug = debug::Debug::new(&device, &camera_bind_group_layout, surface_format);
@@ -721,9 +739,8 @@ impl<'a> State<'a> {
     }
 
     fn left_stick_move(&mut self, x: f32, y: f32) {
-        let speed = 0.2
-            * if self.is_on_ground { 1.0 } else { 0.8 }
-            * if self.is_running { 2.0 } else { 1.0 };
+        let speed =
+            0.2 * if self.is_on_ground { 1.0 } else { 0.8 } * (self.is_running as f32 + 1.0);
         self.camera_controller.left_stick_move(x * speed, y * speed);
     }
 
@@ -794,8 +811,8 @@ impl<'a> State<'a> {
                             self.camera_controller.jump(&mut self.camera, dt);
                         }
                         //run
-                        let run: GamepadButton = buttons.get(2).unchecked_into();
-                        let is_running = run.pressed();
+                        let run: GamepadButton = buttons.get(6).unchecked_into(); // LT
+                        let is_running = run.value();
                         self.is_running = is_running;
                     }
                 }
